@@ -2,16 +2,22 @@ import type { WSClient } from "./types.js";
 import { AgentSession } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
 
+export interface AgentSessionLike {
+  sendMessage(content: string): void;
+  getOutputStream(): AsyncIterable<any>;
+  close(): void | Promise<void>;
+}
+
 // Session manages a single chat conversation with a long-lived agent
 export class Session {
   public readonly chatId: string;
   private subscribers: Set<WSClient> = new Set();
-  private agentSession: AgentSession;
+  private agentSession: AgentSessionLike;
   private isListening = false;
 
-  constructor(chatId: string) {
+  constructor(chatId: string, agentSession: AgentSessionLike = new AgentSession()) {
     this.chatId = chatId;
-    this.agentSession = new AgentSession();
+    this.agentSession = agentSession;
   }
 
   // Start listening to agent output (call once)
