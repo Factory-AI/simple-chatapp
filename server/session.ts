@@ -3,8 +3,7 @@ import { AgentSession, type AgentEvent } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
 
 export interface AgentSessionLike {
-  sendMessage(content: string): void;
-  getOutputStream(): AsyncIterable<AgentEvent>;
+  sendMessage(content: string): AsyncIterable<AgentEvent>;
   close(): void | Promise<void>;
 }
 
@@ -13,26 +12,11 @@ export class Session {
   public readonly chatId: string;
   private subscribers: Set<WSClient> = new Set();
   private agentSession: AgentSessionLike;
-  private isListening = false;
+  private turnQueue: Promise<void> = Promise.resolve();
 
   constructor(chatId: string, agentSession: AgentSessionLike = new AgentSession()) {
     this.chatId = chatId;
     this.agentSession = agentSession;
-  }
-
-  // Start listening to agent output (call once)
-  private async startListening() {
-    if (this.isListening) return;
-    this.isListening = true;
-
-    try {
-      for await (const event of this.agentSession.getOutputStream()) {
-        this.handleAgentEvent(event);
-      }
-    } catch (error) {
-      console.error(`Error in session ${this.chatId}:`, error);
-      this.broadcastError((error as Error).message);
-    }
   }
 
   // Send a user message to the agent
@@ -50,12 +34,19 @@ export class Session {
       chatId: this.chatId,
     });
 
-    // Send to agent first (this starts the session if needed)
-    this.agentSession.sendMessage(content);
+    this.turnQueue = this.turnQueue
+      .catch(() => undefined)
+      .then(() => this.processUserTurn(content));
+  }
 
-    // Start listening if not already
-    if (!this.isListening) {
-      this.startListening();
+  private async processUserTurn(content: string) {
+    try {
+      for await (const event of this.agentSession.sendMessage(content)) {
+        this.handleAgentEvent(event);
+      }
+    } catch (error) {
+      console.error(`Error in session ${this.chatId}:`, error);
+      this.broadcastError((error as Error).message);
     }
   }
 

@@ -145,21 +145,21 @@ export class AgentSession {
     })[Symbol.asyncIterator]();
   }
 
-  // Send a message to the agent
-  sendMessage(content: string) {
-    this.queue.push(content);
-  }
-
-  // Get the output stream
-  async *getOutputStream() {
+  async *sendMessage(content: string): AsyncIterable<AgentEvent> {
     if (!this.outputIterator) {
       throw new Error("Session not initialized");
     }
+
+    this.queue.push(content);
+
     while (true) {
       const { value, done } = await this.outputIterator.next();
       if (done) break;
       for (const event of convertClaudeMessageToAgentEvents(value)) {
         yield event;
+        if (event.type === "result") {
+          return;
+        }
       }
     }
   }

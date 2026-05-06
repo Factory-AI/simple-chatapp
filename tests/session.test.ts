@@ -1,28 +1,36 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentEvent } from "../server/ai-client.js";
 import { chatStore } from "../server/chat-store.js";
 import { Session, type AgentSessionLike } from "../server/session.js";
 
+type FakeTurn = AgentEvent[] | Error;
+
 class FakeAgentSession implements AgentSessionLike {
   public sentMessages: string[] = [];
+  public maxActiveTurns = 0;
+  private activeTurns = 0;
 
-  constructor(
-    private readonly outputMessages: AgentEvent[] = [],
-    private readonly error?: Error
-  ) {}
+  constructor(private readonly turns: FakeTurn[] = []) {}
 
-  sendMessage(content: string): void {
+  async *sendMessage(content: string): AsyncIterable<AgentEvent> {
     this.sentMessages.push(content);
-  }
+    this.activeTurns += 1;
+    this.maxActiveTurns = Math.max(this.maxActiveTurns, this.activeTurns);
 
-  async *getOutputStream(): AsyncIterable<AgentEvent> {
-    for (const message of this.outputMessages) {
-      yield message;
-    }
+    try {
+      const turn = this.turns.shift() ?? [];
 
-    if (this.error) {
-      throw this.error;
+      if (turn instanceof Error) {
+        throw turn;
+      }
+
+      for (const message of turn) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        yield message;
+      }
+    } finally {
+      this.activeTurns -= 1;
     }
   }
 
@@ -69,7 +77,9 @@ describe("Session", () => {
     session.subscribe(client);
     session.sendMessage("Hello");
 
-    expect(agent.sentMessages).toEqual(["Hello"]);
+    await waitFor(() => {
+      expect(agent.sentMessages).toEqual(["Hello"]);
+    });
     expect(chatStore.getMessages(chat.id)).toMatchObject([
       { role: "user", content: "Hello" },
     ]);
@@ -83,10 +93,12 @@ describe("Session", () => {
   it("broadcasts assistant text messages", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
-      {
-        type: "assistant_text",
-        text: "Hi there",
-      },
+      [
+        {
+          type: "assistant_text",
+          text: "Hi there",
+        },
+      ],
     ]);
     const session = new Session(chat.id, agent);
     const { client, sent } = createMockClient();
@@ -111,16 +123,18 @@ describe("Session", () => {
   it("broadcasts tool-use events", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
-      {
-        type: "assistant_text",
-        text: "I will inspect that.",
-      },
-      {
-        type: "tool_use",
-        toolId: "tool-1",
-        toolName: "Read",
-        toolInput: { file_path: "README.md" },
-      },
+      [
+        {
+          type: "assistant_text",
+          text: "I will inspect that.",
+        },
+        {
+          type: "tool_use",
+          toolId: "tool-1",
+          toolName: "Read",
+          toolInput: { file_path: "README.md" },
+        },
+      ],
     ]);
     const session = new Session(chat.id, agent);
     const { client, sent } = createMockClient();
@@ -147,12 +161,14 @@ describe("Session", () => {
   it("broadcasts result metadata", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
-      {
-        type: "result",
-        success: true,
-        cost: 0.01,
-        duration: 1234,
-      },
+      [
+        {
+          type: "result",
+          success: true,
+          cost: 0.01,
+          duration: 1234,
+        },
+      ],
     ]);
     const session = new Session(chat.id, agent);
     const { client, sent } = createMockClient();
@@ -172,20 +188,101 @@ describe("Session", () => {
   });
 
   it("broadcasts stream errors", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const chat = chatStore.createChat();
-    const agent = new FakeAgentSession([], new Error("Agent failed"));
+    const agent = new FakeAgentSession([new Error("Agent failed")]);
+    const session = new Session(chat.id, agent);
+    const { client, sent } = createMockClient();
+
+    try {
+      session.subscribe(client);
+      session.sendMessage("Hello");
+
+      await waitFor(() => {
+        expect(sent).toContainEqual({
+          type: "error",
+          error: "Agent failed",
+          chatId: chat.id,
+        });
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("processes rapid user messages sequentially", async () => {
+    const chat = chatStore.createChat();
+    const agent = new FakeAgentSession([
+      [
+        { type: "assistant_text", text: "First response" },
+        { type: "result", success: true },
+      ],
+      [
+        { type: "assistant_text", text: "Second response" },
+        { type: "result", success: true },
+      ],
+    ]);
     const session = new Session(chat.id, agent);
     const { client, sent } = createMockClient();
 
     session.subscribe(client);
-    session.sendMessage("Hello");
+    session.sendMessage("First");
+    session.sendMessage("Second");
 
     await waitFor(() => {
       expect(sent).toContainEqual({
-        type: "error",
-        error: "Agent failed",
+        type: "assistant_message",
+        content: "Second response",
         chatId: chat.id,
       });
     });
+
+    expect(agent.sentMessages).toEqual(["First", "Second"]);
+    expect(agent.maxActiveTurns).toBe(1);
+
+    const assistantMessages = sent.filter(
+      (message) => message.type === "assistant_message"
+    );
+    expect(assistantMessages.map((message) => message.content)).toEqual([
+      "First response",
+      "Second response",
+    ]);
+  });
+
+  it("continues processing later turns after a turn error", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const chat = chatStore.createChat();
+    const agent = new FakeAgentSession([
+      new Error("First turn failed"),
+      [
+        { type: "assistant_text", text: "Recovered" },
+        { type: "result", success: true },
+      ],
+    ]);
+    const session = new Session(chat.id, agent);
+    const { client, sent } = createMockClient();
+
+    try {
+      session.subscribe(client);
+      session.sendMessage("First");
+      session.sendMessage("Second");
+
+      await waitFor(() => {
+        expect(sent).toContainEqual({
+          type: "error",
+          error: "First turn failed",
+          chatId: chat.id,
+        });
+        expect(sent).toContainEqual({
+          type: "assistant_message",
+          content: "Recovered",
+          chatId: chat.id,
+        });
+      });
+
+      expect(agent.sentMessages).toEqual(["First", "Second"]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
