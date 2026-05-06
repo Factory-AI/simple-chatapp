@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AgentEvent } from "../server/ai-client.js";
 import { chatStore } from "../server/chat-store.js";
 import { Session, type AgentSessionLike } from "../server/session.js";
 
@@ -7,7 +8,7 @@ class FakeAgentSession implements AgentSessionLike {
   public sentMessages: string[] = [];
 
   constructor(
-    private readonly outputMessages: any[] = [],
+    private readonly outputMessages: AgentEvent[] = [],
     private readonly error?: Error
   ) {}
 
@@ -15,7 +16,7 @@ class FakeAgentSession implements AgentSessionLike {
     this.sentMessages.push(content);
   }
 
-  async *getOutputStream(): AsyncIterable<any> {
+  async *getOutputStream(): AsyncIterable<AgentEvent> {
     for (const message of this.outputMessages) {
       yield message;
     }
@@ -79,12 +80,12 @@ describe("Session", () => {
     });
   });
 
-  it("broadcasts assistant text messages from Claude string content", async () => {
+  it("broadcasts assistant text messages", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
       {
-        type: "assistant",
-        message: { content: "Hi there" },
+        type: "assistant_text",
+        text: "Hi there",
       },
     ]);
     const session = new Session(chat.id, agent);
@@ -107,22 +108,18 @@ describe("Session", () => {
     ]);
   });
 
-  it("broadcasts assistant text blocks and tool-use blocks", async () => {
+  it("broadcasts tool-use events", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
       {
-        type: "assistant",
-        message: {
-          content: [
-            { type: "text", text: "I will inspect that." },
-            {
-              type: "tool_use",
-              id: "tool-1",
-              name: "Read",
-              input: { file_path: "README.md" },
-            },
-          ],
-        },
+        type: "assistant_text",
+        text: "I will inspect that.",
+      },
+      {
+        type: "tool_use",
+        toolId: "tool-1",
+        toolName: "Read",
+        toolInput: { file_path: "README.md" },
       },
     ]);
     const session = new Session(chat.id, agent);
@@ -152,9 +149,9 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       {
         type: "result",
-        subtype: "success",
-        total_cost_usd: 0.01,
-        duration_ms: 1234,
+        success: true,
+        cost: 0.01,
+        duration: 1234,
       },
     ]);
     const session = new Session(chat.id, agent);

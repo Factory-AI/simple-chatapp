@@ -14,6 +14,67 @@ type UserMessage = {
   message: { role: "user"; content: string };
 };
 
+export type AgentEvent =
+  | { type: "assistant_text"; text: string }
+  | {
+      type: "tool_use";
+      toolName: string;
+      toolId: string;
+      toolInput: Record<string, unknown>;
+    }
+  | {
+      type: "result";
+      success: boolean;
+      cost?: number;
+      duration?: number;
+    };
+
+export function convertClaudeMessageToAgentEvents(message: any): AgentEvent[] {
+  if (message.type === "assistant") {
+    const content = message.message.content;
+
+    if (typeof content === "string") {
+      return [{ type: "assistant_text", text: content }];
+    }
+
+    if (!Array.isArray(content)) {
+      return [];
+    }
+
+    return content.flatMap((block): AgentEvent[] => {
+      if (block.type === "text") {
+        return [{ type: "assistant_text", text: block.text }];
+      }
+
+      if (block.type === "tool_use") {
+        return [
+          {
+            type: "tool_use",
+            toolName: block.name,
+            toolId: block.id,
+            toolInput: block.input,
+          },
+        ];
+      }
+
+      return [];
+    });
+  }
+
+  if (message.type === "result") {
+    return [
+      {
+        type: "result",
+        success: message.subtype === "success",
+        cost: message.total_cost_usd,
+        duration: message.duration_ms,
+      },
+    ];
+  }
+
+  return [];
+}
+
 // Simple async queue - messages go in via push(), come out via async iteration
 class MessageQueue {
   private messages: UserMessage[] = [];
@@ -97,7 +158,9 @@ export class AgentSession {
     while (true) {
       const { value, done } = await this.outputIterator.next();
       if (done) break;
-      yield value;
+      for (const event of convertClaudeMessageToAgentEvents(value)) {
+        yield event;
+      }
     }
   }
 

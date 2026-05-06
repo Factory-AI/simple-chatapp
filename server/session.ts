@@ -1,10 +1,10 @@
 import type { WSClient } from "./types.js";
-import { AgentSession } from "./ai-client.js";
+import { AgentSession, type AgentEvent } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
 
 export interface AgentSessionLike {
   sendMessage(content: string): void;
-  getOutputStream(): AsyncIterable<any>;
+  getOutputStream(): AsyncIterable<AgentEvent>;
   close(): void | Promise<void>;
 }
 
@@ -26,8 +26,8 @@ export class Session {
     this.isListening = true;
 
     try {
-      for await (const message of this.agentSession.getOutputStream()) {
-        this.handleSDKMessage(message);
+      for await (const event of this.agentSession.getOutputStream()) {
+        this.handleAgentEvent(event);
       }
     } catch (error) {
       console.error(`Error in session ${this.chatId}:`, error);
@@ -59,50 +59,32 @@ export class Session {
     }
   }
 
-  private handleSDKMessage(message: any) {
-    if (message.type === "assistant") {
-      const content = message.message.content;
-
-      if (typeof content === "string") {
-        chatStore.addMessage(this.chatId, {
-          role: "assistant",
-          content,
-        });
-        this.broadcast({
-          type: "assistant_message",
-          content,
-          chatId: this.chatId,
-        });
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === "text") {
-            chatStore.addMessage(this.chatId, {
-              role: "assistant",
-              content: block.text,
-            });
-            this.broadcast({
-              type: "assistant_message",
-              content: block.text,
-              chatId: this.chatId,
-            });
-          } else if (block.type === "tool_use") {
-            this.broadcast({
-              type: "tool_use",
-              toolName: block.name,
-              toolId: block.id,
-              toolInput: block.input,
-              chatId: this.chatId,
-            });
-          }
-        }
-      }
-    } else if (message.type === "result") {
+  private handleAgentEvent(event: AgentEvent) {
+    if (event.type === "assistant_text") {
+      chatStore.addMessage(this.chatId, {
+        role: "assistant",
+        content: event.text,
+      });
+      this.broadcast({
+        type: "assistant_message",
+        content: event.text,
+        chatId: this.chatId,
+      });
+    } else if (event.type === "tool_use") {
+      this.broadcast({
+        type: "tool_use",
+        toolName: event.toolName,
+        toolId: event.toolId,
+        toolInput: event.toolInput,
+        chatId: this.chatId,
+      });
+    } else if (event.type === "result") {
       this.broadcast({
         type: "result",
-        success: message.subtype === "success",
+        success: event.success,
         chatId: this.chatId,
-        cost: message.total_cost_usd,
-        duration: message.duration_ms,
+        cost: event.cost,
+        duration: event.duration,
       });
     }
   }
