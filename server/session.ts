@@ -1,32 +1,23 @@
+import type { DroidMessage } from "@factory/droid-sdk";
 import type { WSClient } from "./types.js";
 import { AgentSession } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
+
+export interface AgentSessionLike {
+  stream(content: string): AsyncIterable<DroidMessage>;
+  close(): void | Promise<void>;
+}
 
 // Session manages a single chat conversation with a long-lived agent
 export class Session {
   public readonly chatId: string;
   private subscribers: Set<WSClient> = new Set();
-  private agentSession: AgentSession;
-  private isListening = false;
+  private agentSession: AgentSessionLike;
+  private turnQueue: Promise<void> = Promise.resolve();
 
-  constructor(chatId: string) {
+  constructor(chatId: string, agentSession: AgentSessionLike = new AgentSession()) {
     this.chatId = chatId;
-    this.agentSession = new AgentSession();
-  }
-
-  // Start listening to agent output (call once)
-  private async startListening() {
-    if (this.isListening) return;
-    this.isListening = true;
-
-    try {
-      for await (const message of this.agentSession.getOutputStream()) {
-        this.handleSDKMessage(message);
-      }
-    } catch (error) {
-      console.error(`Error in session ${this.chatId}:`, error);
-      this.broadcastError((error as Error).message);
-    }
+    this.agentSession = agentSession;
   }
 
   // Send a user message to the agent
@@ -44,61 +35,64 @@ export class Session {
       chatId: this.chatId,
     });
 
-    // Send to agent first (this starts the session if needed)
-    this.agentSession.sendMessage(content);
+    this.turnQueue = this.turnQueue
+      .catch(() => undefined)
+      .then(() => this.processUserTurn(content));
+  }
 
-    // Start listening if not already
-    if (!this.isListening) {
-      this.startListening();
+  private async processUserTurn(content: string) {
+    try {
+      await this.streamDroidTurn(content);
+    } catch (error) {
+      console.error(`Error in session ${this.chatId}:`, error);
+      this.broadcastError((error as Error).message);
     }
   }
 
-  private handleSDKMessage(message: any) {
-    if (message.type === "assistant") {
-      const content = message.message.content;
+  private async streamDroidTurn(content: string) {
+    let assistantText = "";
+    let sawError = false;
 
-      if (typeof content === "string") {
-        chatStore.addMessage(this.chatId, {
-          role: "assistant",
-          content,
-        });
+    for await (const message of this.agentSession.stream(content)) {
+      if (message.type === "assistant_text_delta") {
+        assistantText += message.text;
+      } else if (message.type === "tool_use") {
         this.broadcast({
-          type: "assistant_message",
-          content,
+          type: "tool_use",
+          toolName: message.toolName,
+          toolId: message.toolUseId,
+          toolInput: message.toolInput,
           chatId: this.chatId,
         });
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === "text") {
-            chatStore.addMessage(this.chatId, {
-              role: "assistant",
-              content: block.text,
-            });
-            this.broadcast({
-              type: "assistant_message",
-              content: block.text,
-              chatId: this.chatId,
-            });
-          } else if (block.type === "tool_use") {
-            this.broadcast({
-              type: "tool_use",
-              toolName: block.name,
-              toolId: block.id,
-              toolInput: block.input,
-              chatId: this.chatId,
-            });
-          }
+      } else if (message.type === "error") {
+        sawError = true;
+        this.broadcastError(message.message);
+      } else if (message.type === "turn_complete") {
+        if (assistantText) {
+          this.broadcastAssistantMessage(assistantText);
         }
+
+        this.broadcast({
+          type: "result",
+          success: !sawError,
+          chatId: this.chatId,
+          tokenUsage: message.tokenUsage,
+        });
+        return;
       }
-    } else if (message.type === "result") {
-      this.broadcast({
-        type: "result",
-        success: message.subtype === "success",
-        chatId: this.chatId,
-        cost: message.total_cost_usd,
-        duration: message.duration_ms,
-      });
     }
+  }
+
+  private broadcastAssistantMessage(content: string) {
+      chatStore.addMessage(this.chatId, {
+        role: "assistant",
+        content,
+      });
+      this.broadcast({
+        type: "assistant_message",
+        content,
+        chatId: this.chatId,
+      });
   }
 
   subscribe(client: WSClient) {
@@ -137,7 +131,7 @@ export class Session {
   }
 
   // Close the session
-  close() {
-    this.agentSession.close();
+  async close() {
+    await this.agentSession.close();
   }
 }

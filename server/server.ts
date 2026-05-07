@@ -61,15 +61,19 @@ app.get("/api/chats/:id", (req, res) => {
 });
 
 // REST API: Delete chat
-app.delete("/api/chats/:id", (req, res) => {
+app.delete("/api/chats/:id", async (req, res) => {
   const deleted = chatStore.deleteChat(req.params.id);
   if (!deleted) {
     return res.status(404).json({ error: "Chat not found" });
   }
   const session = sessions.get(req.params.id);
   if (session) {
-    session.close();
     sessions.delete(req.params.id);
+    try {
+      await session.close();
+    } catch (error) {
+      console.error(`Error closing session ${req.params.id}:`, error);
+    }
   }
   res.json({ success: true });
 });
