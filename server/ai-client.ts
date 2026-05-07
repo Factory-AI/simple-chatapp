@@ -3,6 +3,16 @@ import {
   type DroidSession,
 } from "@factory/droid-sdk";
 
+export const DROID_ENABLED_TOOL_IDS = [
+  "Execute",
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "WebSearch",
+] as const;
+
 export type AgentEvent =
   | { type: "assistant_text"; text: string }
   | {
@@ -57,15 +67,7 @@ export async function* convertDroidStreamToAgentEvents(
 export class AgentSession {
   private sessionPromise: Promise<DroidSession> = createSession({
     cwd: process.cwd(),
-    enabledToolIds: [
-      "Execute",
-      "Read",
-      "Write",
-      "Edit",
-      "Glob",
-      "Grep",
-      "WebSearch",
-    ],
+    enabledToolIds: [...DROID_ENABLED_TOOL_IDS],
   });
 
   async *sendMessage(content: string): AsyncIterable<AgentEvent> {

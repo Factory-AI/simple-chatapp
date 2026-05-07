@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { convertDroidStreamToAgentEvents } from "../server/ai-client.js";
+import {
+  DROID_ENABLED_TOOL_IDS,
+  convertDroidStreamToAgentEvents,
+} from "../server/ai-client.js";
 
 async function collectEvents(messages: any[]) {
   async function* stream() {
@@ -17,6 +20,20 @@ async function collectEvents(messages: any[]) {
 }
 
 describe("convertDroidStreamToAgentEvents", () => {
+  it("uses Droid tool IDs for the migrated chat agent", () => {
+    expect(DROID_ENABLED_TOOL_IDS).toEqual([
+      "Execute",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebSearch",
+    ]);
+    expect(DROID_ENABLED_TOOL_IDS).not.toContain("Bash");
+    expect(DROID_ENABLED_TOOL_IDS).not.toContain("WebFetch");
+  });
+
   it("aggregates Droid assistant text deltas until turn completion", async () => {
     await expect(
       collectEvents([

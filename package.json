@@ -10,7 +10,8 @@
     "start": "tsx server/server.ts",
     "build": "vite build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "tools:check": "tsx scripts/check-droid-tools.ts"
   },
   "dependencies": {
     "@factory/droid-sdk": "^0.1.4",
