@@ -1,6 +1,6 @@
 import { createSession } from "@factory/droid-sdk";
 
-import { DROID_ENABLED_TOOL_IDS } from "../server/ai-client.js";
+import { DROID_ENABLED_TOOL_IDS, DROID_MODEL_ID } from "../server/ai-client.js";
 
 type ToolInfo = {
   llmId: string;
@@ -15,6 +15,7 @@ type ToolInspectableSession = {
 async function main() {
   const session = (await createSession({
     cwd: process.cwd(),
+    modelId: DROID_MODEL_ID,
     enabledToolIds: [...DROID_ENABLED_TOOL_IDS],
   })) as ToolInspectableSession;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DROID_ENABLED_TOOL_IDS } from "../server/ai-client.js";
+import { DROID_ENABLED_TOOL_IDS, DROID_MODEL_ID } from "../server/ai-client.js";
 import { chatStore } from "../server/chat-store.js";
 import { Session, type AgentSessionLike } from "../server/session.js";
 
@@ -12,7 +12,10 @@ class FakeAgentSession implements AgentSessionLike {
   public maxActiveTurns = 0;
   private activeTurns = 0;
 
-  constructor(private readonly turns: FakeTurn[] = []) {}
+  constructor(
+    private readonly turns: FakeTurn[] = [],
+    private readonly closeDelay?: Promise<void>
+  ) {}
 
   async *stream(content: string): AsyncIterable<FakeDroidMessage> {
     this.sentMessages.push(content);
@@ -35,7 +38,9 @@ class FakeAgentSession implements AgentSessionLike {
     }
   }
 
-  close(): void {}
+  async close(): Promise<void> {
+    await this.closeDelay;
+  }
 }
 
 function createMockClient() {
@@ -69,18 +74,24 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 describe("Session", () => {
+  it("uses an explicit Droid model for the migrated chat agent", () => {
+    expect(DROID_MODEL_ID).toBe("claude-opus-4-7");
+  });
+
   it("uses Droid tool IDs for the migrated chat agent", () => {
     expect(DROID_ENABLED_TOOL_IDS).toEqual([
       "Execute",
       "Read",
-      "Write",
+      "Create",
       "Edit",
       "Glob",
       "Grep",
+      "LS",
       "WebSearch",
     ]);
     expect(DROID_ENABLED_TOOL_IDS).not.toContain("Bash");
     expect(DROID_ENABLED_TOOL_IDS).not.toContain("WebFetch");
+    expect(DROID_ENABLED_TOOL_IDS).not.toContain("ApplyPatch");
   });
 
   it("stores and broadcasts user messages", async () => {
@@ -216,6 +227,27 @@ describe("Session", () => {
         tokenUsage,
       });
     });
+  });
+
+  it("awaits async agent cleanup when closing", async () => {
+    let resolveClose: () => void = () => {};
+    let closeFinished = false;
+    const closeDelay = new Promise<void>((resolve) => {
+      resolveClose = resolve;
+    });
+    const chat = chatStore.createChat();
+    const agent = new FakeAgentSession([], closeDelay);
+    const session = new Session(chat.id, agent);
+
+    const closePromise = session.close().then(() => {
+      closeFinished = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(closeFinished).toBe(false);
+    resolveClose();
+    await closePromise;
+    expect(closeFinished).toBe(true);
   });
 
   it("broadcasts Droid error events and marks the result unsuccessful", async () => {

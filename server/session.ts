@@ -131,7 +131,7 @@ export class Session {
   }
 
   // Close the session
-  close() {
-    this.agentSession.close();
+  async close() {
+    await this.agentSession.close();
   }
 }
