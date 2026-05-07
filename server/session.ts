@@ -69,6 +69,8 @@ export class Session {
         toolInput: event.toolInput,
         chatId: this.chatId,
       });
+    } else if (event.type === "error") {
+      this.broadcastError(event.error);
     } else if (event.type === "result") {
       this.broadcast({
         type: "result",
@@ -76,6 +78,7 @@ export class Session {
         chatId: this.chatId,
         cost: event.cost,
         duration: event.duration,
+        tokenUsage: event.tokenUsage,
       });
     }
   }

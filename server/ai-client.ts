@@ -1,18 +1,7 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
-
-const SYSTEM_PROMPT = `You are a helpful AI assistant. You can help users with a wide variety of tasks including:
-- Answering questions
-- Writing and editing text
-- Coding and debugging
-- Analysis and research
-- Creative tasks
-
-Be concise but thorough in your responses.`;
-
-type UserMessage = {
-  type: "user";
-  message: { role: "user"; content: string };
-};
+import {
+  createSession,
+  type DroidSession,
+} from "@factory/droid-sdk";
 
 export type AgentEvent =
   | { type: "assistant_text"; text: string }
@@ -22,149 +11,70 @@ export type AgentEvent =
       toolId: string;
       toolInput: Record<string, unknown>;
     }
+  | { type: "error"; error: string }
   | {
       type: "result";
       success: boolean;
       cost?: number;
       duration?: number;
+      tokenUsage?: unknown;
     };
 
-export function convertClaudeMessageToAgentEvents(message: any): AgentEvent[] {
-  if (message.type === "assistant") {
-    const content = message.message.content;
+export async function* convertDroidStreamToAgentEvents(
+  stream: AsyncIterable<any>
+): AsyncIterable<AgentEvent> {
+  let assistantText = "";
+  let sawError = false;
 
-    if (typeof content === "string") {
-      return [{ type: "assistant_text", text: content }];
-    }
-
-    if (!Array.isArray(content)) {
-      return [];
-    }
-
-    return content.flatMap((block): AgentEvent[] => {
-      if (block.type === "text") {
-        return [{ type: "assistant_text", text: block.text }];
+  for await (const message of stream) {
+    if (message.type === "assistant_text_delta") {
+      assistantText += message.text;
+    } else if (message.type === "tool_use") {
+      yield {
+        type: "tool_use",
+        toolName: message.toolName,
+        toolId: message.toolUseId,
+        toolInput: message.toolInput,
+      };
+    } else if (message.type === "error") {
+      sawError = true;
+      yield { type: "error", error: message.message };
+    } else if (message.type === "turn_complete") {
+      if (assistantText) {
+        yield { type: "assistant_text", text: assistantText };
       }
 
-      if (block.type === "tool_use") {
-        return [
-          {
-            type: "tool_use",
-            toolName: block.name,
-            toolId: block.id,
-            toolInput: block.input,
-          },
-        ];
-      }
-
-      return [];
-    });
-  }
-
-  if (message.type === "result") {
-    return [
-      {
+      yield {
         type: "result",
-        success: message.subtype === "success",
-        cost: message.total_cost_usd,
-        duration: message.duration_ms,
-      },
-    ];
-  }
-
-  return [];
-}
-
-// Simple async queue - messages go in via push(), come out via async iteration
-class MessageQueue {
-  private messages: UserMessage[] = [];
-  private waiting: ((msg: UserMessage) => void) | null = null;
-  private closed = false;
-
-  push(content: string) {
-    const msg: UserMessage = {
-      type: "user",
-      message: {
-        role: "user",
-        content,
-      },
-    };
-
-    if (this.waiting) {
-      // Someone is waiting for a message - give it to them
-      this.waiting(msg);
-      this.waiting = null;
-    } else {
-      // No one waiting - queue it
-      this.messages.push(msg);
+        success: !sawError,
+        tokenUsage: message.tokenUsage,
+      };
+      return;
     }
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<UserMessage> {
-    while (!this.closed) {
-      if (this.messages.length > 0) {
-        yield this.messages.shift()!;
-      } else {
-        // Wait for next message
-        yield await new Promise<UserMessage>((resolve) => {
-          this.waiting = resolve;
-        });
-      }
-    }
-  }
-
-  close() {
-    this.closed = true;
   }
 }
 
 export class AgentSession {
-  private queue = new MessageQueue();
-  private outputIterator: AsyncIterator<any> | null = null;
-
-  constructor() {
-    // Start the query immediately with the queue as input
-    // Cast to any - SDK accepts simpler message format at runtime
-    this.outputIterator = query({
-      prompt: this.queue as any,
-      options: {
-        maxTurns: 100,
-        model: "opus",
-        allowedTools: [
-          "Bash",
-          "Read",
-          "Write",
-          "Edit",
-          "Glob",
-          "Grep",
-          "WebSearch",
-          "WebFetch",
-        ],
-        systemPrompt: SYSTEM_PROMPT,
-      },
-    })[Symbol.asyncIterator]();
-  }
+  private sessionPromise: Promise<DroidSession> = createSession({
+    cwd: process.cwd(),
+    enabledToolIds: [
+      "Execute",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebSearch",
+    ],
+  });
 
   async *sendMessage(content: string): AsyncIterable<AgentEvent> {
-    if (!this.outputIterator) {
-      throw new Error("Session not initialized");
-    }
-
-    this.queue.push(content);
-
-    while (true) {
-      const { value, done } = await this.outputIterator.next();
-      if (done) break;
-      for (const event of convertClaudeMessageToAgentEvents(value)) {
-        yield event;
-        if (event.type === "result") {
-          return;
-        }
-      }
-    }
+    const session = await this.sessionPromise;
+    yield* convertDroidStreamToAgentEvents(session.stream(content));
   }
 
-  close() {
-    this.queue.close();
+  async close() {
+    const session = await this.sessionPromise;
+    await session.close();
   }
 }
