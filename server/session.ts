@@ -1,9 +1,10 @@
+import type { DroidMessage } from "@factory/droid-sdk";
 import type { WSClient } from "./types.js";
-import { AgentSession, type AgentEvent } from "./ai-client.js";
+import { AgentSession } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
 
 export interface AgentSessionLike {
-  sendMessage(content: string): AsyncIterable<AgentEvent>;
+  stream(content: string): AsyncIterable<DroidMessage>;
   close(): void | Promise<void>;
 }
 
@@ -41,46 +42,57 @@ export class Session {
 
   private async processUserTurn(content: string) {
     try {
-      for await (const event of this.agentSession.sendMessage(content)) {
-        this.handleAgentEvent(event);
-      }
+      await this.streamDroidTurn(content);
     } catch (error) {
       console.error(`Error in session ${this.chatId}:`, error);
       this.broadcastError((error as Error).message);
     }
   }
 
-  private handleAgentEvent(event: AgentEvent) {
-    if (event.type === "assistant_text") {
+  private async streamDroidTurn(content: string) {
+    let assistantText = "";
+    let sawError = false;
+
+    for await (const message of this.agentSession.stream(content)) {
+      if (message.type === "assistant_text_delta") {
+        assistantText += message.text;
+      } else if (message.type === "tool_use") {
+        this.broadcast({
+          type: "tool_use",
+          toolName: message.toolName,
+          toolId: message.toolUseId,
+          toolInput: message.toolInput,
+          chatId: this.chatId,
+        });
+      } else if (message.type === "error") {
+        sawError = true;
+        this.broadcastError(message.message);
+      } else if (message.type === "turn_complete") {
+        if (assistantText) {
+          this.broadcastAssistantMessage(assistantText);
+        }
+
+        this.broadcast({
+          type: "result",
+          success: !sawError,
+          chatId: this.chatId,
+          tokenUsage: message.tokenUsage,
+        });
+        return;
+      }
+    }
+  }
+
+  private broadcastAssistantMessage(content: string) {
       chatStore.addMessage(this.chatId, {
         role: "assistant",
-        content: event.text,
+        content,
       });
       this.broadcast({
         type: "assistant_message",
-        content: event.text,
+        content,
         chatId: this.chatId,
       });
-    } else if (event.type === "tool_use") {
-      this.broadcast({
-        type: "tool_use",
-        toolName: event.toolName,
-        toolId: event.toolId,
-        toolInput: event.toolInput,
-        chatId: this.chatId,
-      });
-    } else if (event.type === "error") {
-      this.broadcastError(event.error);
-    } else if (event.type === "result") {
-      this.broadcast({
-        type: "result",
-        success: event.success,
-        chatId: this.chatId,
-        cost: event.cost,
-        duration: event.duration,
-        tokenUsage: event.tokenUsage,
-      });
-    }
   }
 
   subscribe(client: WSClient) {

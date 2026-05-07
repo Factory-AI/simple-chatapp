@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentEvent } from "../server/ai-client.js";
+import { DROID_ENABLED_TOOL_IDS } from "../server/ai-client.js";
 import { chatStore } from "../server/chat-store.js";
 import { Session, type AgentSessionLike } from "../server/session.js";
 
-type FakeTurn = AgentEvent[] | Error;
+type FakeDroidMessage = any;
+type FakeTurn = FakeDroidMessage[] | Error;
 
 class FakeAgentSession implements AgentSessionLike {
   public sentMessages: string[] = [];
@@ -13,7 +14,7 @@ class FakeAgentSession implements AgentSessionLike {
 
   constructor(private readonly turns: FakeTurn[] = []) {}
 
-  async *sendMessage(content: string): AsyncIterable<AgentEvent> {
+  async *stream(content: string): AsyncIterable<FakeDroidMessage> {
     this.sentMessages.push(content);
     this.activeTurns += 1;
     this.maxActiveTurns = Math.max(this.maxActiveTurns, this.activeTurns);
@@ -68,6 +69,20 @@ async function waitFor(assertion: () => void): Promise<void> {
 }
 
 describe("Session", () => {
+  it("uses Droid tool IDs for the migrated chat agent", () => {
+    expect(DROID_ENABLED_TOOL_IDS).toEqual([
+      "Execute",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebSearch",
+    ]);
+    expect(DROID_ENABLED_TOOL_IDS).not.toContain("Bash");
+    expect(DROID_ENABLED_TOOL_IDS).not.toContain("WebFetch");
+  });
+
   it("stores and broadcasts user messages", async () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession();
@@ -95,8 +110,16 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       [
         {
-          type: "assistant_text",
-          text: "Hi there",
+          type: "assistant_text_delta",
+          text: "Hi",
+        },
+        {
+          type: "assistant_text_delta",
+          text: " there",
+        },
+        {
+          type: "turn_complete",
+          tokenUsage: null,
         },
       ],
     ]);
@@ -125,14 +148,18 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       [
         {
-          type: "assistant_text",
+          type: "assistant_text_delta",
           text: "I will inspect that.",
         },
         {
           type: "tool_use",
-          toolId: "tool-1",
+          toolUseId: "tool-1",
           toolName: "Read",
           toolInput: { file_path: "README.md" },
+        },
+        {
+          type: "turn_complete",
+          tokenUsage: null,
         },
       ],
     ]);
@@ -159,14 +186,19 @@ describe("Session", () => {
   });
 
   it("broadcasts result metadata", async () => {
+    const tokenUsage = {
+      inputTokens: 1,
+      outputTokens: 2,
+      cacheCreationTokens: 3,
+      cacheReadTokens: 4,
+      thinkingTokens: 5,
+    };
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
       [
         {
-          type: "result",
-          success: true,
-          cost: 0.01,
-          duration: 1234,
+          type: "turn_complete",
+          tokenUsage,
         },
       ],
     ]);
@@ -181,8 +213,42 @@ describe("Session", () => {
         type: "result",
         success: true,
         chatId: chat.id,
-        cost: 0.01,
-        duration: 1234,
+        tokenUsage,
+      });
+    });
+  });
+
+  it("broadcasts Droid error events and marks the result unsuccessful", async () => {
+    const chat = chatStore.createChat();
+    const agent = new FakeAgentSession([
+      [
+        {
+          type: "error",
+          message: "Tool failed",
+        },
+        {
+          type: "turn_complete",
+          tokenUsage: null,
+        },
+      ],
+    ]);
+    const session = new Session(chat.id, agent);
+    const { client, sent } = createMockClient();
+
+    session.subscribe(client);
+    session.sendMessage("Hello");
+
+    await waitFor(() => {
+      expect(sent).toContainEqual({
+        type: "error",
+        error: "Tool failed",
+        chatId: chat.id,
+      });
+      expect(sent).toContainEqual({
+        type: "result",
+        success: false,
+        chatId: chat.id,
+        tokenUsage: null,
       });
     });
   });
@@ -214,12 +280,12 @@ describe("Session", () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
       [
-        { type: "assistant_text", text: "First response" },
-        { type: "result", success: true },
+        { type: "assistant_text_delta", text: "First response" },
+        { type: "turn_complete", tokenUsage: null },
       ],
       [
-        { type: "assistant_text", text: "Second response" },
-        { type: "result", success: true },
+        { type: "assistant_text_delta", text: "Second response" },
+        { type: "turn_complete", tokenUsage: null },
       ],
     ]);
     const session = new Session(chat.id, agent);
@@ -255,8 +321,8 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       new Error("First turn failed"),
       [
-        { type: "assistant_text", text: "Recovered" },
-        { type: "result", success: true },
+        { type: "assistant_text_delta", text: "Recovered" },
+        { type: "turn_complete", tokenUsage: null },
       ],
     ]);
     const session = new Session(chat.id, agent);
