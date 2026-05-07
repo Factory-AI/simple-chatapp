@@ -1,6 +1,6 @@
 # Simple Chat App
 
-A demo chat application using the Claude Agent SDK with a React frontend and Express backend.
+A demo chat application using the Factory Droid SDK with a React frontend and Express backend.
 
 ![Architecture Diagram](diagram.png)
 
@@ -9,7 +9,7 @@ A demo chat application using the Claude Agent SDK with a React frontend and Exp
 ### Prerequisites
 
 - Node.js 18+
-- Claude Agent SDK credentials (set `ANTHROPIC_API_KEY` environment variable)
+- Factory CLI installed, and authenticated via login or the `FACTORY_API_KEY` environment variable
 
 ### Installation
 
@@ -29,15 +29,23 @@ This starts both:
 
 Open http://localhost:5173 in your browser.
 
+The backend starts a Droid SDK session with the `claude-opus-4-7` model and enables the app's configured tools: `Execute`, `Read`, `Create`, `Edit`, `Glob`, `Grep`, `LS`, and `WebSearch`.
+
+To verify the configured tools are available for the selected model:
+
+```bash
+npm run tools:check
+```
+
 ## Production Considerations
 
 This is an example app for demonstration purposes. For production use, consider:
 
-1. **Isolate the Agent SDK** - Move the SDK into a separate container/service. This provides better security isolation since the agent has access to tools like Bash, file system operations, and web requests.
+1. **Isolate the Droid SDK** - Move the SDK into a separate container/service. This provides better security isolation since the agent can access configured tools such as command execution, file operations, and web search.
 
 2. **Persistent storage** - Replace the in-memory `ChatStore` with a database. Currently all chats are lost on server restart.
 
-3. **Transcript syncing** - For Agent Sessions to be persisted across server restarts, you'll need to persist and restore the SDK's conversation transcripts. The SDK maintains internal state for multi-turn conversations that must be synced with your storage.
+3. **Transcript syncing** - For Droid sessions to be persisted across server restarts, you'll need to persist and restore the SDK's conversation state. The SDK maintains internal state for multi-turn conversations that must be synced with your storage.
 
 4. **Authentication** - Add user authentication and authorization. Currently anyone can access any chat.
 
