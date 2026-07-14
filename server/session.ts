@@ -1,4 +1,4 @@
-import type { DroidMessage } from "@factory/droid-sdk";
+import { DroidMessageType, type DroidMessage } from "@factory/droid-sdk";
 import type { WSClient } from "./types.js";
 import { AgentSession } from "./ai-client.js";
 import { chatStore } from "./chat-store.js";
@@ -54,27 +54,29 @@ export class Session {
     let sawError = false;
 
     for await (const message of this.agentSession.stream(content)) {
-      if (message.type === "assistant_text_delta") {
-        assistantText += message.text;
-      } else if (message.type === "tool_use") {
+      if (message.type === DroidMessageType.Assistant) {
+        if (message.text) {
+          assistantText += message.text;
+        }
+      } else if (message.type === DroidMessageType.ToolCall) {
         this.broadcast({
           type: "tool_use",
-          toolName: message.toolName,
-          toolId: message.toolUseId,
-          toolInput: message.toolInput,
+          toolName: message.toolUse.name,
+          toolId: message.toolUse.id,
+          toolInput: message.toolUse.input,
           chatId: this.chatId,
         });
-      } else if (message.type === "error") {
+      } else if (message.type === DroidMessageType.Error) {
         sawError = true;
         this.broadcastError(message.message);
-      } else if (message.type === "turn_complete") {
+      } else if (message.type === DroidMessageType.Result) {
         if (assistantText) {
           this.broadcastAssistantMessage(assistantText);
         }
 
         this.broadcast({
           type: "result",
-          success: !sawError,
+          success: !message.isError && !sawError,
           chatId: this.chatId,
           tokenUsage: message.tokenUsage,
         });

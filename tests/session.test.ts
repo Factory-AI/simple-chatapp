@@ -121,15 +121,12 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       [
         {
-          type: "assistant_text_delta",
-          text: "Hi",
+          type: "assistant",
+          text: "Hi there",
         },
         {
-          type: "assistant_text_delta",
-          text: " there",
-        },
-        {
-          type: "turn_complete",
+          type: "result",
+          isError: false,
           tokenUsage: null,
         },
       ],
@@ -159,17 +156,21 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       [
         {
-          type: "assistant_text_delta",
+          type: "assistant",
           text: "I will inspect that.",
         },
         {
-          type: "tool_use",
-          toolUseId: "tool-1",
-          toolName: "Read",
-          toolInput: { file_path: "README.md" },
+          type: "tool_call",
+          toolUse: {
+            type: "tool_use",
+            id: "tool-1",
+            name: "Read",
+            input: { file_path: "README.md" },
+          },
         },
         {
-          type: "turn_complete",
+          type: "result",
+          isError: false,
           tokenUsage: null,
         },
       ],
@@ -208,7 +209,8 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       [
         {
-          type: "turn_complete",
+          type: "result",
+          isError: false,
           tokenUsage,
         },
       ],
@@ -259,7 +261,8 @@ describe("Session", () => {
           message: "Tool failed",
         },
         {
-          type: "turn_complete",
+          type: "result",
+          isError: true,
           tokenUsage: null,
         },
       ],
@@ -312,12 +315,12 @@ describe("Session", () => {
     const chat = chatStore.createChat();
     const agent = new FakeAgentSession([
       [
-        { type: "assistant_text_delta", text: "First response" },
-        { type: "turn_complete", tokenUsage: null },
+        { type: "assistant", text: "First response" },
+        { type: "result", isError: false, tokenUsage: null },
       ],
       [
-        { type: "assistant_text_delta", text: "Second response" },
-        { type: "turn_complete", tokenUsage: null },
+        { type: "assistant", text: "Second response" },
+        { type: "result", isError: false, tokenUsage: null },
       ],
     ]);
     const session = new Session(chat.id, agent);
@@ -353,8 +356,8 @@ describe("Session", () => {
     const agent = new FakeAgentSession([
       new Error("First turn failed"),
       [
-        { type: "assistant_text_delta", text: "Recovered" },
-        { type: "turn_complete", tokenUsage: null },
+        { type: "assistant", text: "Recovered" },
+        { type: "result", isError: false, tokenUsage: null },
       ],
     ]);
     const session = new Session(chat.id, agent);

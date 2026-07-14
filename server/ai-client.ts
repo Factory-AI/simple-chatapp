@@ -19,6 +19,7 @@ export const DROID_ENABLED_TOOL_IDS = [
 
 export class AgentSession {
   private sessionPromise: Promise<DroidSession> = createSession({
+    apiKey: process.env.FACTORY_API_KEY!,
     cwd: process.cwd(),
     modelId: DROID_MODEL_ID,
     enabledToolIds: [...DROID_ENABLED_TOOL_IDS],
