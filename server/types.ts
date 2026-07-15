@@ -12,6 +12,9 @@ export interface Chat {
   title: string;
   createdAt: string;
   updatedAt: string;
+  // Daemon session id, so a reconnecting Session can resume the same agent
+  // session instead of creating a fresh one.
+  daemonSessionId?: string;
 }
 
 // Message stored in memory

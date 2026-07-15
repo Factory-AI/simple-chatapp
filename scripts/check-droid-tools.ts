@@ -2,6 +2,11 @@ import { createSession } from "@factory/droid-sdk";
 
 import { DROID_ENABLED_TOOL_IDS, DROID_MODEL_ID } from "../server/ai-client.js";
 
+// This diagnostic deliberately uses exec mode (createSession), not the daemon
+// transport the server now uses. Tool-catalog introspection relies on
+// DroidSession.listTools(), which the daemon session does not expose in this
+// SDK version. A diagnostic's transport need not match the server's.
+
 type ToolInfo = {
   llmId: string;
   currentlyAllowed?: boolean;

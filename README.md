@@ -37,15 +37,19 @@ To verify the configured tools are available for the selected model:
 npm run tools:check
 ```
 
+## Transport
+
+The backend uses the SDK's **daemon mode**: a single `connectDaemon` connection is shared across every chat, and one `droid daemon` process multiplexes all sessions over one WebSocket. Each chat's daemon session id is stored on the chat so a reconnecting session resumes the same agent session (see `server/daemon.ts` and `server/ai-client.ts`). This replaced the earlier exec-mode approach, which spawned one `droid exec` subprocess per chat.
+
 ## Production Considerations
 
 This is an example app for demonstration purposes. For production use, consider:
 
-1. **Isolate the Droid SDK** - Move the SDK into a separate container/service. This provides better security isolation since the agent can access configured tools such as command execution, file operations, and web search.
+1. **Isolate the Droid SDK** - Run the `droid daemon` as a separate container/service. This provides better security isolation since the agent can access configured tools such as command execution, file operations, and web search. Daemon mode also lets you target a remote/ephemeral machine per session via the `machine` option.
 
-2. **Persistent storage** - Replace the in-memory `ChatStore` with a database. Currently all chats are lost on server restart.
+2. **Persistent storage** - Replace the in-memory `ChatStore` with a database. Currently all chats (and the `daemonSessionId` used to resume sessions) are lost on server restart.
 
-3. **Transcript syncing** - For Droid sessions to be persisted across server restarts, you'll need to persist and restore the SDK's conversation state. The SDK maintains internal state for multi-turn conversations that must be synced with your storage.
+3. **Session persistence across restarts** - Resume-by-id works within a running server. To survive a full restart, persist each chat's `daemonSessionId` in the database and resume from it on boot.
 
 4. **Authentication** - Add user authentication and authorization. Currently anyone can access any chat.
 

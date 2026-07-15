@@ -15,9 +15,23 @@ export class Session {
   private agentSession: AgentSessionLike;
   private turnQueue: Promise<void> = Promise.resolve();
 
-  constructor(chatId: string, agentSession: AgentSessionLike = new AgentSession()) {
+  constructor(chatId: string, agentSession?: AgentSessionLike) {
     this.chatId = chatId;
-    this.agentSession = agentSession;
+    if (agentSession) {
+      this.agentSession = agentSession;
+    } else {
+      const resumeId = chatStore.getChat(chatId)?.daemonSessionId;
+      const session = new AgentSession(resumeId);
+      this.agentSession = session;
+      // Persist the daemon session id so a later Session for this chat can
+      // resume the same agent session instead of starting a fresh one.
+      if (!resumeId) {
+        void session
+          .getSessionId()
+          .then((id) => chatStore.setDaemonSessionId(chatId, id))
+          .catch(() => undefined);
+      }
+    }
   }
 
   // Send a user message to the agent

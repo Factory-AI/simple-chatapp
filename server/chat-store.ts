@@ -39,6 +39,14 @@ class ChatStore {
     return chat;
   }
 
+  setDaemonSessionId(id: string, daemonSessionId: string): Chat | undefined {
+    const chat = this.chats.get(id);
+    if (chat) {
+      chat.daemonSessionId = daemonSessionId;
+    }
+    return chat;
+  }
+
   deleteChat(id: string): boolean {
     this.messages.delete(id);
     return this.chats.delete(id);
